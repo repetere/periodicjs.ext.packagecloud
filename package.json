@@ -1,6 +1,6 @@
 {
-  "name": "periodicjs.ext.passport",
-  "description": "Passport JS wrapper for periodicjs.",
+  "name": "periodicjs.ext.packagecloud",
+  "description": "Package cloud wrapper for periodicjs.",
   "version": "0.0.1",
   "main": "index.js",
   "engines": {
