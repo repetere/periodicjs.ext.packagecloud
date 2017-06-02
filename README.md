@@ -1,2 +1,2 @@
-# periodicjs.ext.packagecloud
-Package cloud wrapper for periodicjs
+# periodicjs.ext.passport
+Passport JS wrapper for periodicjs
