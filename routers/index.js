@@ -1,10 +1,10 @@
 'use strict';
 
 const periodic = require('periodicjs');
-const extensionRouter = periodic.app.Router();
+const extensionRouter = periodic.express.Router();
 
-extensionRouter.all('/passport', (req, res) => {
-  res.send('PASSPORT EXTENSION');
+extensionRouter.all('/packagecloud', (req, res) => {
+  res.send('PACKAGE CLOUD EXTENSION');
 });
 
 module.exports = extensionRouter;
