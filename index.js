@@ -1,4 +1,6 @@
 'use strict';
 const periodic = require('periodicjs');
 
-module.exports = periodic.initExtension({});
+module.exports = () => {
+  return Promise.resolve('ok package');
+};
