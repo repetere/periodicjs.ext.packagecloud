@@ -2,5 +2,5 @@
 const periodic = require('periodicjs');
 
 module.exports = () => {
-  return Promise.resolve('ok package');
-};
+  return Promise.resolve(true);
+}
