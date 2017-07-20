@@ -12,6 +12,9 @@ module.exports = {
     container: {
       name: 'periodicjs', //bucketname
     },
+    initialize: {
+      wait_for_client: false,
+    }
   },
   databases: {},
 };

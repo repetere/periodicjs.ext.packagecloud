@@ -3,10 +3,26 @@ const periodic = require('periodicjs');
 const pkgcloud = require('pkgcloud');
 const Busboy = require('busboy');
 const crypto = require('crypto');
+const moment = require('moment');
 const path = require('path');
 const settings = require('./settings');
 let client = {};
 let publicPath = {};
+
+function pkgCloudUploadDirectory(options) {
+  const { req, periodic, upload_dir, include_timestamp_in_dir, } = options;
+  // console.log({ upload_dir });
+  const current_date = moment().format('YYYY/MM/DD');
+  const upload_path_dir = (req.localuploadpath) ?
+    req.localuploadpath :
+    path.join(upload_dir, (include_timestamp_in_dir) ? current_date : '');
+  return {
+    current_date,
+    upload_dir,
+    upload_path_dir,
+    periodicDir: path.join(upload_dir, (include_timestamp_in_dir) ? current_date : ''),
+  };
+}
 
 
 /**
@@ -21,21 +37,21 @@ let publicPath = {};
 function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) {
   const fieldHandler = periodic.core.files.formFieldHandler.bind(this);
   const pkgCloudClient = this.pkgcloud_client;
-  const upload_dir = this.periodic.settings.express.config.upload_directory;
+  const upload_dir = this.upload_directory || 'clouduploads';
   const name = periodic.core.files.renameFile.call(this, {
     filename,
     req: this.req,
   });
-  const uploadDir = periodic.core.files.uploadDirectory({
+  const uploadDir = pkgCloudUploadDirectory({
     req: this.req,
     periodic: this.periodic,
     upload_dir,
+    include_timestamp_in_dir: (typeof this.include_timestamp_in_dir === 'boolean') ? this.include_timestamp_in_dir : true,
   });
   const pkgCloudUploadFileName = path.join(this.upload_path_dir || uploadDir.upload_path_dir, name);
-  const pkgCloudRemoteBaseURL = (this.prefer_http) ? pkgCloudClient.publicPath.cdnUri : pkgCloudClient.publicPath.cdnSslUri;
-  // const filelocation = (pkgCloudClient.clientSettings.provider === 'amazon') ? uploaded_cloud_file.location : pkgCloudClient.publicPath.cdnUri + '/' + pkgCloudUploadFileName;
-  const filelocation = path.join(pkgCloudRemoteBaseURL, pkgCloudUploadFileName);
-  const fileurl = pkgCloudUploadFileName;
+  const pkgCloudRemoteBaseURL = (this.prefer_http) ? pkgCloudClient.publicPath.cdnUri : pkgCloudClient.publicPath.cdnSslUri + '/';
+  const filelocation = pkgCloudRemoteBaseURL + pkgCloudUploadFileName;
+  const fileurl = filelocation;
   const processedFile = {
     fieldname,
     encoding,
@@ -45,6 +61,7 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
     filename: name,
     name,
     fileurl,
+    location: filelocation,
     uploaddirectory: uploadDir.periodicDir,
     encrypted_client_side: this.encrypted_client_side,
     client_encryption_algo: this.client_encryption_algo,
@@ -77,14 +94,12 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
     });
 
     uploadStream.on('success', (cloudfile) => {
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM')
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM')
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM')
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM')
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM')
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM')
-      console.log('~~~~~~~~~~~~~~S3 SRTEAM', { cloudfile });
-      // success, file will be a File model
+      this.cloudfiles.push(cloudfile);
+      if (this.cloudfiles.length === this.files.length && this.completedFormProcessing === false && this.wait_for_cloud_uploads === true) {
+        // console.log('UPLOADS HAVE FINISHED');
+        this.completeHandler();
+        this.completedFormProcessing = true;
+      }
     });
 
     if (this.encrypted_client_side) {
@@ -107,13 +122,12 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
     processedFile.size = filesize;
   });
   file.on('end', () => {
-    console.log('FILE PROCESSING COMPLETE')
-    console.log('FILE PROCESSING COMPLETE')
-    console.log('FILE PROCESSING COMPLETE')
-    console.log('FILE PROCESSING COMPLETE')
-    console.log('FILE PROCESSING COMPLETE')
-    console.log('FILE PROCESSING COMPLETE')
     this.files.push(processedFile);
+    if (this.cloudfiles.length === this.files.length && this.completedFormProcessing === false && this.wait_for_cloud_uploads === true) {
+      // console.log('UPLOADS HAVE FINISHED');
+      this.completeHandler();
+      this.completedFormProcessing = true;
+    }
   });
   file.on('error', (e) => {
     throw e;
@@ -135,15 +149,24 @@ function pkgCloudUploadMiddleware(req, res, next) {
   const middlewareInstance = Object.assign({}, {
     body: {},
     files: [],
+    cloudfiles: [],
+    completedFormProcessing: false,
+    wait_for_cloud_uploads: (typeof req.wait_for_cloud_uploads === 'boolean') ? req.wait_for_cloud_uploads : this.wait_for_cloud_uploads,
     req,
     res,
   }, this);
+  const completeHandler = periodic.core.files.completeFormHandler.bind(middlewareInstance, { req, res, next, });
+  middlewareInstance.completeHandler = completeHandler;
   const fileHandler = pkgCloudFormFileHandler.bind(middlewareInstance);
   const fieldHandler = periodic.core.files.formFieldHandler.bind(middlewareInstance);
-  const completeHandler = periodic.core.files.completeFormHandler.bind(middlewareInstance, { req, res, next, });
   busboy.on('file', fileHandler);
   busboy.on('field', fieldHandler);
-  busboy.on('finish', completeHandler);
+  busboy.on('finish', () => {
+    if (this.wait_for_cloud_uploads === false) {
+      // console.log('COMPLETING BEFORE UPLOADS')
+      completeHandler();
+    }
+  });
   req.pipe(busboy);
 }
 
@@ -163,14 +186,42 @@ function pkgCloudUploadMiddleware(req, res, next) {
 function pkgCloudUploadMiddlewareHandler(options = {}) {
   //needs to be bound with this.pkgcloud_client
   return pkgCloudUploadMiddleware.bind(Object.assign({
-    pkgcloud_client: this.pkgcloud_client
+    pkgcloud_client: this.pkgcloud_client,
+    wait_for_cloud_uploads: true,
   }, periodic.core.files.uploadMiddlewareHandlerDefaultOptions, options));
 }
 
+function removeCloudFilePromise(options) {
+  const { asset } = options;
+  if (asset.locationtype !== 'local') {
+    return new Promise((resolve, reject) => {
+      this.pkgcloud_client.client.removeFile(asset.attributes.cloudcontainername, asset.attributes.cloudfilepath, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(true);
+        }
+      });
+    });
+  } else {
+    return undefined;
+  }
+}
+
+function pkgCloudRemoveMiddlewareHandler(options) {
+  const removeFilePromise = removeCloudFilePromise.bind(this);
+  return periodic.core.files.removeMiddleware.bind(Object.assign({
+    removeFilePromise
+  }, periodic.core.files.removeMiddlewareHandlerDefaultOptions, options));
+}
+
 module.exports = {
+  pkgCloudUploadDirectory,
   pkgCloudFormFileHandler,
   pkgCloudUploadMiddleware,
+  removeCloudFilePromise,
   pkgCloudUploadMiddlewareHandler,
+  pkgCloudRemoveMiddlewareHandler,
 };
 
 
