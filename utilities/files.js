@@ -69,7 +69,7 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
       cloudfilepath: pkgCloudUploadFileName,
       cloudcontainername: pkgCloudClient.containerSettings.name,
       location: filelocation,
-    })
+    }),
   };
   // let response = (this.use_buffers) ? [] : '';
   let filesize = 0;
@@ -86,8 +86,8 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
         'cache-control': this.cacheControl || 'public, max-age=86400',
         'Cache-Control': this.cacheControl || 'public, max-age=86400',
         'Content-Type': mimetype,
-        'x-amz-meta-Cache-Control': this.cacheControl || 'public, max-age=86400'
-      }
+        'x-amz-meta-Cache-Control': this.cacheControl || 'public, max-age=86400',
+      },
     });
     uploadStream.on('error', (e) => {
       throw e;
@@ -145,29 +145,33 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
  * @param {function} next express next handler
  */
 function pkgCloudUploadMiddleware(req, res, next) {
-  const busboy = new Busboy({ headers: req.headers, });
-  const middlewareInstance = Object.assign({}, {
-    body: {},
-    files: [],
-    cloudfiles: [],
-    completedFormProcessing: false,
-    wait_for_cloud_uploads: (typeof req.wait_for_cloud_uploads === 'boolean') ? req.wait_for_cloud_uploads : this.wait_for_cloud_uploads,
-    req,
-    res,
-  }, this);
-  const completeHandler = periodic.core.files.completeFormHandler.bind(middlewareInstance, { req, res, next, });
-  middlewareInstance.completeHandler = completeHandler;
-  const fileHandler = pkgCloudFormFileHandler.bind(middlewareInstance);
-  const fieldHandler = periodic.core.files.formFieldHandler.bind(middlewareInstance);
-  busboy.on('file', fileHandler);
-  busboy.on('field', fieldHandler);
-  busboy.on('finish', () => {
-    if (this.wait_for_cloud_uploads === false) {
-      // console.log('COMPLETING BEFORE UPLOADS')
-      completeHandler();
-    }
-  });
-  req.pipe(busboy);
+  if (req.headers[ 'content-type' ].toLowerCase().indexOf('multipart/form-data') === -1) {
+    next();
+  } else {
+    const busboy = new Busboy({ headers: req.headers, });
+    const middlewareInstance = Object.assign({}, {
+      body: {},
+      files: [],
+      cloudfiles: [],
+      completedFormProcessing: false,
+      wait_for_cloud_uploads: (typeof req.wait_for_cloud_uploads === 'boolean') ? req.wait_for_cloud_uploads : this.wait_for_cloud_uploads,
+      req,
+      res,
+    }, this);
+    const completeHandler = periodic.core.files.completeFormHandler.bind(middlewareInstance, { req, res, next, });
+    middlewareInstance.completeHandler = completeHandler;
+    const fileHandler = pkgCloudFormFileHandler.bind(middlewareInstance);
+    const fieldHandler = periodic.core.files.formFieldHandler.bind(middlewareInstance);
+    busboy.on('file', fileHandler);
+    busboy.on('field', fieldHandler);
+    busboy.on('finish', () => {
+      if (this.wait_for_cloud_uploads === false) {
+        // console.log('COMPLETING BEFORE UPLOADS')
+        completeHandler();
+      }
+    });
+    req.pipe(busboy);
+  }
 }
 
 /**
@@ -192,7 +196,7 @@ function pkgCloudUploadMiddlewareHandler(options = {}) {
 }
 
 function removeCloudFilePromise(options) {
-  const { asset } = options;
+  const { asset, } = options;
   if (asset.locationtype !== 'local') {
     return new Promise((resolve, reject) => {
       this.pkgcloud_client.client.removeFile(asset.attributes.cloudcontainername, asset.attributes.cloudfilepath, (err) => {
@@ -211,7 +215,7 @@ function removeCloudFilePromise(options) {
 function pkgCloudRemoveMiddlewareHandler(options) {
   const removeFilePromise = removeCloudFilePromise.bind(this);
   return periodic.core.files.removeMiddleware.bind(Object.assign({
-    removeFilePromise
+    removeFilePromise,
   }, periodic.core.files.removeMiddlewareHandlerDefaultOptions, options));
 }
 
