@@ -199,7 +199,13 @@ function removeCloudFilePromise(options) {
   const { asset, } = options;
   if (asset.locationtype !== 'local') {
     return new Promise((resolve, reject) => {
-      this.pkgcloud_client.client.removeFile(asset.attributes.cloudcontainername, asset.attributes.cloudfilepath, (err) => {
+      const containerName = (asset.attributes)
+        ? asset.attributes.cloudcontainername
+        : asset.attributes.cloudcontainername;
+      const containerFilepath = (asset.attributes)
+        ? asset.attributes.cloudfilepath
+        : asset.attributes.cloudfilepath;
+      this.pkgcloud_client.client.removeFile(containerName, containerFilepath, (err) => {
         if (err) {
           reject(err);
         } else {
