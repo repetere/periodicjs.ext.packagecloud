@@ -21,6 +21,8 @@ module.exports = () => {
 
           periodic.core.files.uploadDirectory = utilities.files.pkgCloudUploadDirectory;
 
+          periodic.core.files.uploadFile = utilities.files.pkgCloudUploadFileHandler({ pkgcloud_client: pkgCloudClient, periodic, });
+
           if (extSettings.initialize.wait_for_client === true) {
             resolve(pkgCloudClient);
           }

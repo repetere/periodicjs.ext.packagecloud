@@ -4,7 +4,9 @@ const pkgcloud = require('pkgcloud');
 const Busboy = require('busboy');
 const crypto = require('crypto');
 const moment = require('moment');
+const fs = require('fs-extra');
 const path = require('path');
+const mime = require('mime');
 const settings = require('./settings');
 let client = {};
 let publicPath = {};
@@ -137,6 +139,138 @@ function pkgCloudFormFileHandler(fieldname, file, filename, encoding, mimetype) 
   fieldHandler(fieldname, filename);
 }
 
+
+async function pkgCloudUploadFile({ fieldname = 'upload_file', renameOptions = { 'exclude-userstamp':true}, uploadDirectoryOptions = {}, user = {}, file, filename, encoding = 'binary', mimetype, include_asset_body, fileBody = {}, }) {
+  filename = !filename ? path.parse(file).base : filename;
+  mimetype = mimetype || mime.lookup(filename);
+  const periodic= this.periodic;
+  const pkgCloudClient = this.pkgcloud_client;
+  const upload_dir = this.upload_directory || 'clouduploads';
+  const name = periodic.core.files.renameFile.call(this, {
+    filename,
+    req: {
+      body: renameOptions,
+      user,
+    },
+  });
+  const uploadDir = pkgCloudUploadDirectory({
+    req:  uploadDirectoryOptions,
+    upload_dir,
+    periodic,
+    include_timestamp_in_dir: (typeof this.include_timestamp_in_dir === 'boolean') ? this.include_timestamp_in_dir : true,
+  });
+  const pkgCloudUploadFileName = path.join(this.upload_path_dir || uploadDir.upload_path_dir, name);
+  const pkgCloudRemoteBaseURL = (this.prefer_http) ? pkgCloudClient.publicPath.cdnUri : pkgCloudClient.publicPath.cdnSslUri + '/';
+  const filelocation = pkgCloudRemoteBaseURL + pkgCloudUploadFileName;
+  const fileurl = filelocation;
+  const processedFile = {
+    fieldname,
+    encoding,
+    mimetype: mimetype || mime.lookup(filename),
+    locationtype: pkgCloudClient.clientSettings.provider,
+    original_filename: filename,
+    filename: name,
+    name,
+    fileurl,
+    location: filelocation,
+    uploaddirectory: uploadDir.periodicDir,
+    encrypted_client_side: this.encrypted_client_side,
+    client_encryption_algo: this.client_encryption_algo,
+    attributes: Object.assign({}, pkgCloudClient.publicPath, {
+      cloudfilepath: pkgCloudUploadFileName,
+      cloudcontainername: pkgCloudClient.containerSettings.name,
+      location: filelocation,
+    }),
+  };
+  // let response = (this.use_buffers) ? [] : '';
+  let filesize = 0;
+  file = typeof file === 'string' ? fs.createReadStream(path.resolve(file)) : file;
+  
+  
+  return new Promise((resolve, reject) => {
+    try {
+      file.on('data', (chunk) => {
+        if (this.use_buffers) {
+          // response.push(chunk);
+          filesize = filesize + Buffer.byteLength(chunk);
+        } else {
+          // response += chunk;
+          filesize = filesize + chunk.length;
+        }
+        processedFile.size = filesize;
+      });
+      file.on('end', async () => {
+        // console.log('file end this.req.body', this.req.body)
+        const files = [ processedFile ];
+        const newassets = files.map(file => periodic.core.files.generateAssetFromFile({
+          include_asset_body,
+          req: { body: fileBody },
+          periodic,
+          file,
+        }));
+        if (this.save_file_to_asset) {
+          const assetDBName = this.asset_core_data || this.periodic.settings.express.config.asset_core_data;
+          const assetDB = this.periodic.datas.get(assetDBName);
+          // console.log('this.periodic.datas',this.periodic.datas);
+          // console.log('assetDB',assetDB);
+          const newdoc = (this.pre_asset_create_map)
+            ? newassets.map(this.pre_asset_create_map({ req, res, periodic }))
+            : newassets;
+          const newassetdocs = await assetDB.create({
+            bulk_create: true,
+            newdoc,
+          });
+          resolve(newassetdocs[ 0 ]);
+        } else {
+          resolve(processedFile);
+        }
+      });
+      file.on('error', reject);
+      if (this.save_to_disk) {
+        const uploadStream = pkgCloudClient.client.upload({
+          container: pkgCloudClient.containerSettings.name,
+          remote: pkgCloudUploadFileName, //name,
+          cacheControl: this.cacheControl || 'public, max-age=86400',
+          contentType: mimetype,
+          ServerSideEncryption: (this.encrypted_client_side) ? 'AES256' : undefined,
+          acl: this.acl || 'public-read',
+          headers: {
+            // optionally provide raw headers to send to cloud files
+            'cache-control': this.cacheControl || 'public, max-age=86400',
+            'Cache-Control': this.cacheControl || 'public, max-age=86400',
+            'Content-Type': mimetype,
+            'x-amz-meta-Cache-Control': this.cacheControl || 'public, max-age=86400',
+          },
+        });
+        uploadStream.on('error', (e) => {
+          throw e;
+        });
+    
+        uploadStream.on('success', (cloudfile) => {
+          // this.cloudfiles.push(cloudfile);
+          // if (this.cloudfiles.length === this.files.length && this.completedFormProcessing === false && this.wait_for_cloud_uploads === true) {
+          //   // console.log('UPLOADS HAVE FINISHED');
+          //   this.completeHandler();
+          //   this.completedFormProcessing = true;
+          // }
+        });
+
+        if (this.encrypted_client_side) {
+          const cipher = crypto.createCipher(this.client_encryption_algo, this.encryption_key);
+          file
+            .pipe(cipher)
+            .pipe(uploadStream);
+        } else {
+          file.pipe(uploadStream);
+        }
+      }
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+
 /**
  * middleware function for handling multi-part form data
  * 
@@ -174,6 +308,14 @@ function pkgCloudUploadMiddleware(req, res, next) {
   }
 }
 
+
+function pkgCloudUploadFileHandler(options = {}) {
+  return pkgCloudUploadFile.bind(Object.assign({
+    pkgcloud_client: this.pkgcloud_client,
+    wait_for_cloud_uploads: true,
+  }, periodic.core.files.uploadMiddlewareHandlerDefaultOptions, options));
+}
+
 /**
  * return a middleware fuction for handling file uploads with busboy
  * 
@@ -190,7 +332,7 @@ function pkgCloudUploadMiddleware(req, res, next) {
 function pkgCloudUploadMiddlewareHandler(options = {}) {
   //needs to be bound with this.pkgcloud_client
   return pkgCloudUploadMiddleware.bind(Object.assign({
-    pkgcloud_client: this.pkgcloud_client,
+    pkgcloud_client: options.pkgcloud_client || this.pkgcloud_client,
     wait_for_cloud_uploads: true,
   }, periodic.core.files.uploadMiddlewareHandlerDefaultOptions, options));
 }
@@ -232,6 +374,8 @@ module.exports = {
   removeCloudFilePromise,
   pkgCloudUploadMiddlewareHandler,
   pkgCloudRemoveMiddlewareHandler,
+  pkgCloudUploadFileHandler,
+  pkgCloudUploadFile,
 };
 
 
