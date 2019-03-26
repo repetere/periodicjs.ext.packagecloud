@@ -2,13 +2,11 @@
   "extends": "eslint:recommended",
   "plugins": [],
   "parserOptions": {
+    "sourceType": "module",
+    "ecmaVersion": 2017,
     "ecmaFeatures": {
-      "ecmaVersion": 6,
       "jsx": true
     }
-  },
-  "ecmaFeatures": {
-    "ecmaVersion": 6
   },
   "rules": {
     "jsx-quotes": ["error", "prefer-double"],
@@ -30,6 +28,7 @@
     "browser": true,
     "commonjs": true,
     "es6": true,
-    "node": true
+    "node": true,
+    "mocha": true
   }
 }
